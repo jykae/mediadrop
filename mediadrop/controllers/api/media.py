@@ -493,6 +493,57 @@ class MediaController(BaseController):
             })
         return info
 
+    @expose("json", request_method="POST")
+    @require_api_key_if_necessary
+    def new(self, **kwargs):
+        def save_media_obj(name, email, title, description, tags, uploaded_file, url):
+            from mediadrop.model import Author
+            from mediadrop.lib.storage import add_new_media_file
+            from mediadrop.lib.thumbnails import create_default_thumbs_for, has_thumbs
+            # create our media object as a status-less placeholder initially
+            media_obj = Media()
+            media_obj.author = Author(name, email)
+            media_obj.title = title
+            media_obj.slug = get_available_slug(Media, title)
+            media_obj.description = description
+            if request.settings['wording_display_administrative_notes']:
+                media_obj.notes = request.settings['wording_administrative_notes']
+            media_obj.set_tags(tags)
+
+            # Give the Media object an ID.
+            DBSession.add(media_obj)
+            DBSession.flush()
+
+            # Create a MediaFile object, add it to the media_obj, and store the file permanently.
+            media_file = add_new_media_file(media_obj, file=uploaded_file, url=url)
+
+            # The thumbs may have been created already by add_new_media_file
+            if not has_thumbs(media_obj):
+                create_default_thumbs_for(media_obj)
+
+            media_obj.update_status()
+            DBSession.flush()
+
+            return media_obj
+
+        metadata = json.load(request.POST.get('metadata').file)
+        file = request.POST.get('file')
+
+        media_obj = save_media_obj(
+            name=metadata.get('author_name'),email=metadata.get('author_email'),
+            title=metadata.get('title'), description=metadata.get('description'),
+            tags=metadata.get('tags'),
+            uploaded_file=file, url=metadata.get('url')
+        )
+        DBSession.add(media_obj)
+        DBSession.commit()
+
+        return {
+            'status': 201,
+            'message': 'Media object created.',
+            'media_id': media_obj.id
+        }
+
 #XXX: Dirty hack to set the actual strings for filetypes, in our docstrings,
 #     based on the canonical definitions in the filetypes module.
 from mediadrop.lib.filetypes import registered_media_types, AUDIO, VIDEO
