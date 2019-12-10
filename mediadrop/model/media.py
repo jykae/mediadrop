@@ -33,9 +33,11 @@ from sqlalchemy.types import Boolean, DateTime, Integer, Unicode, UnicodeText
 from mediadrop.lib.auth import Resource
 from mediadrop.lib.compat import any
 from mediadrop.lib.filetypes import AUDIO, AUDIO_DESC, VIDEO, guess_mimetype
+from mediadrop.lib.storage import add_new_media_file
+from mediadrop.lib.thumbnails import create_default_thumbs_for, has_thumbs
 from mediadrop.lib.util import calculate_popularity
 from mediadrop.lib.xhtml import line_break_xhtml, strip_xhtml
-from mediadrop.model import (get_available_slug, SLUG_LENGTH, 
+from mediadrop.model import (get_available_slug, SLUG_LENGTH,
     _mtm_count_property, _properties_dict_from_labels, MatchAgainstClause)
 from mediadrop.model.meta import DBSession, metadata
 from mediadrop.model.authors import Author
@@ -438,7 +440,7 @@ class Media(object):
         defaults = dict(
             title=u'Foo Media',
             author=Author(u'Joe', u'joe@site.example'),
-            
+
             type = None,
         )
         defaults.update(kwargs)
@@ -582,6 +584,43 @@ class Media(object):
         for file in self.files:
             uris.extend(file.get_uris())
         return uris
+
+    def save(self, name, email, title, description, tags, uploaded_file, url, publish=False):
+        # Update media object metadata
+        self.author = Author(name, email)
+        self.title = title
+        self.slug = get_available_slug(Media, title)
+        self.description = description
+        self.set_tags(tags)
+
+        # Give the Media object an ID.
+        DBSession.add(self)
+        DBSession.flush()
+
+        # Create a MediaFile object, add it to the media_obj, and store the file permanently.
+        media_file = add_new_media_file(self, file=uploaded_file, url=url)
+
+        # The thumbs may have been created already by add_new_media_file
+        if not has_thumbs(self):
+            create_default_thumbs_for(self)
+
+        self.update_status()
+
+        ## Save to database
+        DBSession.add(self)
+        DBSession.commit()
+
+        ## Optional publish
+        if publish:
+            self.reviewed = True
+            self.publishable = True
+            self.publish_on = datetime.now()
+            self.update_popularity()
+            self.update_status()
+            DBSession.add(self)
+            DBSession.commit()
+
+        return self
 
 class MediaFileQuery(Query):
     pass
